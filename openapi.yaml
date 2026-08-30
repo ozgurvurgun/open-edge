@@ -1,0 +1,567 @@
+openapi: 3.1.0
+info:
+  title: Open Edge Observability API
+  version: 1.0.0
+  description: |
+    Cloudflare-native observability backend. Base path `/api/v1`.
+    Browser clients use HttpOnly session cookies. Machine clients use `Authorization: Bearer oe_...`.
+    Tenant identity is never taken from client headers.
+servers:
+  - url: https://api.example.com
+    description: Production
+  - url: http://localhost:8787
+    description: Local wrangler
+tags:
+  - name: Auth
+  - name: Users
+  - name: Tenant
+  - name: ApiKeys
+  - name: Logs
+  - name: Metrics
+  - name: Traces
+  - name: Dashboards
+  - name: Alerts
+  - name: Retention
+  - name: Deletion
+  - name: APM
+  - name: Usage
+  - name: Audit
+  - name: Health
+security:
+  - sessionCookie: []
+  - bearerApiKey: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Process liveness
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+  /ready:
+    get:
+      tags: [Health]
+      security: []
+      summary: Readiness (dependency degradation allowed)
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ready"
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login and set session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke current session
+      responses:
+        "200":
+          description: Logged out
+  /api/v1/auth/session:
+    get:
+      tags: [Auth]
+      summary: Current principal
+      responses:
+        "200":
+          description: Session
+  /api/v1/auth/change-password:
+    post:
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        "200": { description: Changed }
+  /api/v1/auth/sessions:
+    get:
+      tags: [Auth]
+      summary: List sessions
+      responses:
+        "200": { description: Sessions }
+  /api/v1/auth/sessions/{id}:
+    delete:
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Revoked }
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      responses:
+        "200": { description: Current user }
+    patch:
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName: { type: string }
+      responses:
+        "200": { description: Updated }
+  /api/v1/users:
+    get:
+      tags: [Users]
+      responses:
+        "200": { description: Members }
+    post:
+      tags: [Users]
+      summary: Invite member
+      responses:
+        "201": { description: Created }
+  /api/v1/users/{id}/role:
+    patch:
+      tags: [Users]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Updated }
+  /api/v1/users/{id}:
+    delete:
+      tags: [Users]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Removed }
+  /api/v1/tenant:
+    get:
+      tags: [Tenant]
+      responses:
+        "200": { description: Tenant }
+  /api/v1/tenant/deletion:
+    post:
+      tags: [Tenant]
+      summary: Start tenant deletion workflow
+      responses:
+        "200": { description: Started }
+  /api/v1/api-keys:
+    get:
+      tags: [ApiKeys]
+      responses:
+        "200": { description: Keys }
+    post:
+      tags: [ApiKeys]
+      summary: Create key (raw secret shown once)
+      responses:
+        "201": { description: Created }
+  /api/v1/api-keys/{id}:
+    delete:
+      tags: [ApiKeys]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Revoked }
+  /api/v1/api-keys/{id}/rotate:
+    post:
+      tags: [ApiKeys]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Rotated }
+  /api/v1/log-streams:
+    get:
+      tags: [Logs]
+      responses:
+        "200": { description: Streams }
+  /api/v1/log-streams/{id}:
+    get:
+      tags: [Logs]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Stream }
+  /api/v1/logs/ingest:
+    post:
+      tags: [Logs]
+      summary: Enqueue log events (async)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogIngestRequest"
+      responses:
+        "202": { description: Accepted }
+        "413":
+          $ref: "#/components/responses/Error"
+  /v1/logs:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON logs (Alloy / Collector compatible)
+      responses:
+        "202": { description: Accepted }
+  /v1/traces:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON traces
+      responses:
+        "202": { description: Accepted }
+  /v1/metrics:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON metrics
+      responses:
+        "202": { description: Accepted }
+  /api/v1/otlp/v1/logs:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON logs (namespaced path)
+      responses:
+        "202": { description: Accepted }
+  /api/v1/otlp/v1/traces:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON traces (namespaced path)
+      responses:
+        "202": { description: Accepted }
+  /api/v1/otlp/v1/metrics:
+    post:
+      tags: [OTLP]
+      summary: OTLP/HTTP JSON metrics (namespaced path)
+      responses:
+        "202": { description: Accepted }
+  /api/v1/logs/query:
+    post:
+      tags: [Logs]
+      summary: Execute LogQL-inspired query
+      description: |
+        Language subset: `{label="value"}`, `!=`, `=~`, `!~`, `|= "text"`, `|~ "re"`,
+        `| field = "v"`, `| json`, `count_over_time({...}[5m])`, `rate({...}[1m])`.
+        Limits: 4096 chars, 30d range, 5000 rows, 100 streams, 200 chunks, 8s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogQueryRequest"
+      responses:
+        "200": { description: Result }
+        "400":
+          $ref: "#/components/responses/Error"
+        "408":
+          $ref: "#/components/responses/Error"
+  /api/v1/logs/tail:
+    get:
+      tags: [Logs]
+      summary: Live log tail (SSE)
+      parameters:
+        - in: query
+          name: filter
+          schema: { type: string }
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /api/v1/metrics/ingest:
+    post:
+      tags: [Metrics]
+      responses:
+        "202": { description: Accepted }
+  /api/v1/metrics/query:
+    post:
+      tags: [Metrics]
+      responses:
+        "200": { description: Result }
+  /api/v1/metrics:
+    get:
+      tags: [Metrics]
+      parameters:
+        - in: query
+          name: name
+          schema: { type: string }
+      responses:
+        "200": { description: Series }
+  /api/v1/traces/ingest:
+    post:
+      tags: [Traces]
+      responses:
+        "202": { description: Accepted }
+  /api/v1/traces:
+    get:
+      tags: [Traces]
+      parameters:
+        - { in: query, name: start, schema: { type: integer } }
+        - { in: query, name: end, schema: { type: integer } }
+        - { in: query, name: service, schema: { type: string } }
+        - { in: query, name: operation, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [ok, error] } }
+        - { in: query, name: minDurationMs, schema: { type: integer } }
+        - { in: query, name: limit, schema: { type: integer, maximum: 100 } }
+      responses:
+        "200": { description: Traces }
+  /api/v1/traces/{traceId}:
+    get:
+      tags: [Traces]
+      parameters:
+        - in: path
+          name: traceId
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Waterfall }
+  /api/v1/dashboards:
+    get:
+      tags: [Dashboards]
+      responses:
+        "200": { description: List }
+    post:
+      tags: [Dashboards]
+      responses:
+        "201": { description: Created }
+  /api/v1/dashboards/{id}:
+    get:
+      tags: [Dashboards]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Dashboard }
+    put:
+      tags: [Dashboards]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [Dashboards]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Deleted }
+  /api/v1/alerts:
+    get:
+      tags: [Alerts]
+      responses:
+        "200": { description: List }
+    post:
+      tags: [Alerts]
+      responses:
+        "201": { description: Created }
+  /api/v1/alerts/{id}:
+    get:
+      tags: [Alerts]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Alert }
+    put:
+      tags: [Alerts]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [Alerts]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Deleted }
+  /api/v1/retention:
+    get:
+      tags: [Retention]
+      responses:
+        "200": { description: Policy }
+    put:
+      tags: [Retention]
+      responses:
+        "200": { description: Updated }
+  /api/v1/data-deletion:
+    get:
+      tags: [Deletion]
+      responses:
+        "200": { description: Jobs }
+    post:
+      tags: [Deletion]
+      summary: Create deletion job (never deletes inline)
+      responses:
+        "202": { description: Accepted }
+  /api/v1/data-deletion/{id}:
+    get:
+      tags: [Deletion]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Job }
+  /api/v1/apm/overview:
+    get:
+      tags: [APM]
+      responses:
+        "200": { description: Overview }
+  /api/v1/apm/services:
+    get:
+      tags: [APM]
+      responses:
+        "200": { description: Services }
+  /api/v1/apm/endpoints:
+    get:
+      tags: [APM]
+      parameters:
+        - { in: query, name: service, schema: { type: string } }
+      responses:
+        "200": { description: Endpoints }
+  /api/v1/usage:
+    get:
+      tags: [Usage]
+      parameters:
+        - { in: query, name: start, schema: { type: integer } }
+        - { in: query, name: end, schema: { type: integer } }
+      responses:
+        "200": { description: Usage }
+  /api/v1/audit:
+    get:
+      tags: [Audit]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, maximum: 100 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        "200": { description: Audit events }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: oe_session
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: API key prefix oe_. Scopes listed at creation.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Machine-readable error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Envelope:
+      type: object
+      required: [data, error]
+      properties:
+        data: {}
+        error: { type: "null" }
+    ErrorEnvelope:
+      type: object
+      required: [data, error]
+      properties:
+        data: { type: "null" }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_FAILED
+                - UNAUTHENTICATED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - AUTH_RATE_LIMITED
+                - RATE_LIMITED
+                - INVALID_CREDENTIALS
+                - SESSION_EXPIRED
+                - TENANT_DISABLED
+                - CARDINALITY_EXCEEDED
+                - QUERY_INVALID
+                - QUERY_LIMIT_EXCEEDED
+                - QUERY_TIMEOUT
+                - PAYLOAD_TOO_LARGE
+                - CSRF_REJECTED
+                - INTERNAL
+            message: { type: string }
+    Ready:
+      type: object
+      properties:
+        status: { type: string }
+        degraded: { type: boolean }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string }
+    LogIngestRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [line, labels]
+            properties:
+              eventId: { type: string }
+              timestamp: { type: integer }
+              line: { type: string, maxLength: 16384 }
+              labels:
+                type: object
+                additionalProperties: { type: string }
+              fields:
+                type: object
+                additionalProperties: { type: string }
+              traceId: { type: string }
+              spanId: { type: string }
+    LogQueryRequest:
+      type: object
+      required: [query, start, end]
+      properties:
+        query: { type: string, maxLength: 4096 }
+        start: { type: integer }
+        end: { type: integer }
+        limit: { type: integer, maximum: 5000 }
+    Pagination:
+      type: object
+      properties:
+        limit: { type: integer, maximum: 100 }
+        cursor: { type: string }

@@ -1,0 +1,97 @@
+name = "open-edge"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "08d6ee75890a687e032ba5439dd5e1ae"
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+SESSION_TTL_SECONDS = "43200"
+SESSION_COOKIE_NAME = "oe_session"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000,https://open-edge.compartsoftware.workers.dev"
+
+[assets]
+directory = "../frontend/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/v1/*", "/health", "/ready"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "open-edge"
+database_id = "b86e5c5f-7a08-429b-8272-0b8c570a3b8d"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "TELEMETRY"
+bucket_name = "open-edge-telemetry"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "1536825772194317ba5ee42d6b6e3223"
+
+[[queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "open-edge-ingest"
+
+[[queues.producers]]
+binding = "DELETION_QUEUE"
+queue = "open-edge-deletion"
+
+[[queues.consumers]]
+queue = "open-edge-ingest"
+max_batch_size = 50
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "open-edge-ingest-dlq"
+
+[[queues.consumers]]
+queue = "open-edge-deletion"
+max_batch_size = 10
+max_batch_timeout = 10
+max_retries = 8
+dead_letter_queue = "open-edge-deletion-dlq"
+
+[[durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+
+[[durable_objects.bindings]]
+name = "ALERT_COORDINATOR"
+class_name = "AlertCoordinator"
+
+[[durable_objects.bindings]]
+name = "INGEST_BUFFER"
+class_name = "IngestBuffer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub", "AlertCoordinator"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["IngestBuffer"]
+
+[triggers]
+crons = ["* * * * *"]
+
+[[ratelimits]]
+name = "AUTH_RATE_LIMIT"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
+[[ratelimits]]
+name = "INGEST_RATE_LIMIT"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 600
+  period = 60
+
+[[ratelimits]]
+name = "QUERY_RATE_LIMIT"
+namespace_id = "1003"
+  [ratelimits.simple]
+  limit = 120
+  period = 60

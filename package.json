@@ -1,0 +1,43 @@
+{
+  "name": "open-edge",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Cloudflare-native observability backend (logs, metrics, traces, APM).",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "migrate:local": "wrangler d1 migrations apply open-edge --local",
+    "migrate:validate": "node scripts/validate-migrations.mjs",
+    "seed:owner": "node scripts/seed-owner.mjs",
+    "bench": "vitest run tests/benchmarks"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "hono": "^4.7.10",
+    "protobufjs": "^8.8.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@eslint/js": "^9.27.0",
+    "@types/node": "^22.15.21",
+    "eslint": "^9.27.0",
+    "prettier": "^3.5.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.32.1",
+    "vitest": "^3.1.4",
+    "wrangler": "^4.16.1"
+  }
+}
