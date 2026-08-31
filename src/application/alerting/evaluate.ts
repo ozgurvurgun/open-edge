@@ -179,9 +179,6 @@ export async function evaluateAllAlerts(deps: AlertEvalDeps): Promise<{ evaluate
       const value = await evaluateValue(deps, alert, now);
       const prev = await deps.alerts.getState(alert.id);
 
-      // Query failure is not a measurement. Keep prior status/value so broken
-      // queries do not false-fire (< threshold) or silently stay green forever
-      // while being treated as "value is 0".
       if (value === null) {
         await deps.alerts.saveState({
           alertId: alert.id,
