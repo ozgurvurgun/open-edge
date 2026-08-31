@@ -74,7 +74,11 @@ async function tryLock(
   }
 }
 
-async function evaluateValue(deps: AlertEvalDeps, alert: Alert, now: number): Promise<number> {
+async function evaluateValue(
+  deps: AlertEvalDeps,
+  alert: Alert,
+  now: number,
+): Promise<number | null> {
   const start = now - alert.windowSeconds * 1000;
   const principal = systemPrincipal(alert.tenantId);
   if (alert.kind === "logs") {
@@ -104,7 +108,7 @@ async function evaluateValue(deps: AlertEvalDeps, alert: Alert, now: number): Pr
       }
       return result.hits.length;
     } catch {
-      return 0;
+      return null;
     }
   }
   const metricDeps: MetricQueryDeps = {
@@ -117,7 +121,7 @@ async function evaluateValue(deps: AlertEvalDeps, alert: Alert, now: number): Pr
   try {
     return await metricQueryScalar(metricDeps, principal, alert.query, start, now);
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -173,11 +177,28 @@ export async function evaluateAllAlerts(deps: AlertEvalDeps): Promise<{ evaluate
       if (!acquired) continue;
 
       const value = await evaluateValue(deps, alert, now);
+      const prev = await deps.alerts.getState(alert.id);
+
+      // Query failure is not a measurement. Keep prior status/value so broken
+      // queries do not false-fire (< threshold) or silently stay green forever
+      // while being treated as "value is 0".
+      if (value === null) {
+        await deps.alerts.saveState({
+          alertId: alert.id,
+          tenantId: alert.tenantId,
+          status: prev?.status ?? "ok",
+          lastEvaluatedAt: now,
+          lastFiredAt: prev?.lastFiredAt ?? null,
+          lastValue: prev?.lastValue ?? null,
+        });
+        evaluated += 1;
+        continue;
+      }
+
       const silences = await deps.alerts.listActiveSilences(alert.tenantId, now);
       const silenced = silences.some((s) => silenceIsActive(s, now, alert.id));
 
       const breached = compareThreshold(value, alert.comparator, alert.threshold);
-      const prev = await deps.alerts.getState(alert.id);
       const status = nextStatus(alert, breached, prev, now);
 
       let lastFiredAt = prev?.lastFiredAt ?? null;

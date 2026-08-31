@@ -35,6 +35,8 @@ import type {
 
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const DUMMY_PASSWORD_HASH = "0".repeat(64);
+const DUMMY_PASSWORD_SALT = "0".repeat(32);
 
 export interface AuthDeps {
   readonly clock: Clock;
@@ -162,9 +164,13 @@ export async function login(
     );
   }
   const user = await deps.users.findByEmail(email);
-  const valid = user
-    ? await deps.passwords.verify(input.password, user.passwordHash, user.passwordSalt)
-    : false;
+  // Always run PBKDF2 so missing emails are not cheaper than wrong passwords
+  // (timing-based user enumeration). Dummy salt/hash never matches a real user.
+  const valid = await deps.passwords.verify(
+    input.password,
+    user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    user?.passwordSalt ?? DUMMY_PASSWORD_SALT,
+  );
   await deps.attempts.record(emailHash(email), input.ipHash ?? "unknown", valid, now);
   if (!user || !valid) {
     await writeAudit(deps, IdentityAuditActions.LOGIN_FAILED, null, user?.id ?? null, input.ipHash);
