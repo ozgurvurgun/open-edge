@@ -125,13 +125,6 @@ export async function consumeIngestBatch(
       deps.clock.now(),
     );
   }
-  for (const message of [...logs, ...metrics]) {
-    await deps.dedup.remember(
-      asTenantId(message.tenantId),
-      asEventId(message.eventId),
-      deps.clock.now(),
-    );
-  }
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
@@ -165,6 +158,7 @@ async function consumeLogGroup(
       if (!stream) {
         if ((await deps.streams.countByTenant(tenantId)) >= MAX_STREAMS_PER_TENANT) {
           deps.metrics.record("cardinality_rejected", 1, { kind: "logs" });
+          await deps.dedup.remember(tenantId, asEventId(message.eventId), now);
           continue;
         }
         stream = {
@@ -229,6 +223,9 @@ async function consumeLogGroup(
         timestamp: entry.timestamp,
       });
     }
+    for (const eventId of bucket.eventIds) {
+      await deps.dedup.remember(tenantId, eventId, now);
+    }
   }
 }
 
@@ -238,7 +235,10 @@ async function consumeMetricGroup(
   messages: IngestQueueMessage[],
 ): Promise<void> {
   const now = deps.clock.now();
-  const byFingerprint = new Map<string, { series: MetricSeries; samples: MetricSample[] }>();
+  const byFingerprint = new Map<
+    string,
+    { series: MetricSeries; samples: MetricSample[]; eventIds: EventId[] }
+  >();
   for (const message of messages) {
     const payload = message.payload as MetricPayload;
     const labels = createLabelSet(payload.labels);
@@ -249,6 +249,7 @@ async function consumeMetricGroup(
       if (!series) {
         if ((await deps.series.countByTenant(tenantId)) >= MAX_SERIES_PER_TENANT) {
           deps.metrics.record("cardinality_rejected", 1, { kind: "metrics" });
+          await deps.dedup.remember(tenantId, asEventId(message.eventId), now);
           continue;
         }
         series = {
@@ -265,7 +266,7 @@ async function consumeMetricGroup(
         series = { ...series, lastSeenAt: now };
       }
       await deps.series.save(series);
-      bucket = { series, samples: [] };
+      bucket = { series, samples: [], eventIds: [] };
       byFingerprint.set(fingerprint, bucket);
     }
     bucket.samples.push({
@@ -275,12 +276,16 @@ async function consumeMetricGroup(
       count: payload.count,
       sum: payload.sum,
     });
+    bucket.eventIds.push(asEventId(message.eventId));
   }
   for (const bucket of byFingerprint.values()) {
+    if (bucket.samples.length === 0) {
+      continue;
+    }
     bucket.samples.sort((a, b) => a.timestamp - b.timestamp);
     const body = bucket.samples.map((s) => JSON.stringify(s)).join("\n") + "\n";
     const compressed = await deps.compressor.gzip(new TextEncoder().encode(body));
-    const chunkId = deps.ids.id();
+    const chunkId = asChunkId(stableId(deps, bucket.eventIds));
     const startTime = bucket.samples[0]!.timestamp;
     const endTime = bucket.samples[bucket.samples.length - 1]!.timestamp;
     const objectKey = metricObjectKey(tenantId, bucket.series.id, chunkId, startTime);
@@ -300,6 +305,9 @@ async function consumeMetricGroup(
     await deps.metricChunks.save(chunk);
     await deps.objects.put(objectKey, compressed);
     await deps.metricChunks.save({ ...chunk, status: "ready" });
+    for (const eventId of bucket.eventIds) {
+      await deps.dedup.remember(tenantId, eventId, now);
+    }
   }
 }
 
