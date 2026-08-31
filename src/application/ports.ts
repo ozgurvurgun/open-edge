@@ -116,6 +116,9 @@ export interface LogChunkRepository {
 export interface DedupRepository {
   seen(tenantId: TenantId, eventId: EventId): Promise<boolean>;
   remember(tenantId: TenantId, eventId: EventId, createdAt: number): Promise<void>;
+  /** Event ids not yet recorded for this tenant (input order preserved). */
+  filterUnseen(tenantId: TenantId, eventIds: EventId[]): Promise<EventId[]>;
+  rememberMany(tenantId: TenantId, eventIds: EventId[], createdAt: number): Promise<void>;
 }
 
 export interface MetricSeriesRepository {

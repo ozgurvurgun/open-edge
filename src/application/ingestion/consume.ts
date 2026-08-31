@@ -91,13 +91,20 @@ export async function consumeIngestBatch(
   messages: IngestQueueMessage[],
 ): Promise<void> {
   const fresh: IngestQueueMessage[] = [];
-  for (const message of messages) {
-    const tenantId = asTenantId(message.tenantId);
-    const eventId = asEventId(message.eventId);
-    if (await deps.dedup.seen(tenantId, eventId)) {
-      continue;
+  const byTenant = groupBy(messages, (m) => m.tenantId);
+  for (const [tenantKey, group] of byTenant) {
+    const tenantId = asTenantId(tenantKey);
+    const unseen = new Set(
+      await deps.dedup.filterUnseen(
+        tenantId,
+        group.map((m) => asEventId(m.eventId)),
+      ),
+    );
+    for (const message of group) {
+      if (unseen.has(asEventId(message.eventId))) {
+        fresh.push(message);
+      }
     }
-    fresh.push(message);
   }
 
   const logs = fresh.filter((m) => m.kind === "logs");
@@ -112,18 +119,14 @@ export async function consumeIngestBatch(
   for (const [tenantId, group] of metricsByTenant) {
     await consumeMetricGroup(deps, asTenantId(tenantId), group);
   }
-  for (const message of traces) {
-    await consumeTrace(
-      deps,
-      asTenantId(message.tenantId),
-      message.payload as TracePayload,
-      message.receivedAt,
-    );
-    await deps.dedup.remember(
-      asTenantId(message.tenantId),
-      asEventId(message.eventId),
-      deps.clock.now(),
-    );
+
+  const tracesByTenant = groupBy(traces, (m) => m.tenantId);
+  for (const [tenantKey, group] of tracesByTenant) {
+    const tenantId = asTenantId(tenantKey);
+    for (const message of group) {
+      await consumeTrace(deps, tenantId, message.payload as TracePayload, message.receivedAt);
+      await deps.dedup.remember(tenantId, asEventId(message.eventId), deps.clock.now());
+    }
   }
 }
 
@@ -223,9 +226,7 @@ async function consumeLogGroup(
         timestamp: entry.timestamp,
       });
     }
-    for (const eventId of bucket.eventIds) {
-      await deps.dedup.remember(tenantId, eventId, now);
-    }
+    await deps.dedup.rememberMany(tenantId, bucket.eventIds, now);
   }
 }
 
@@ -305,9 +306,7 @@ async function consumeMetricGroup(
     await deps.metricChunks.save(chunk);
     await deps.objects.put(objectKey, compressed);
     await deps.metricChunks.save({ ...chunk, status: "ready" });
-    for (const eventId of bucket.eventIds) {
-      await deps.dedup.remember(tenantId, eventId, now);
-    }
+    await deps.dedup.rememberMany(tenantId, bucket.eventIds, now);
   }
 }
 

@@ -662,6 +662,14 @@ export function memoryDedup(w: MemoryWorld): DedupRepository {
     async remember(tenantId, eventId) {
       w.dedup.add(`${tenantId}:${eventId}`);
     },
+    async filterUnseen(tenantId, eventIds) {
+      return eventIds.filter((id) => !w.dedup.has(`${tenantId}:${id}`));
+    },
+    async rememberMany(tenantId, eventIds) {
+      for (const eventId of eventIds) {
+        w.dedup.add(`${tenantId}:${eventId}`);
+      }
+    },
   };
 }
 

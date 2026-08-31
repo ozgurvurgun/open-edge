@@ -1,5 +1,6 @@
 import { DEFAULT_QUERY_LIMITS } from "../../domain/query/query-limits.js";
 import { AppError, ErrorCodes } from "../../shared/errors.js";
+import { mapPool } from "../../shared/map-pool.js";
 import { requirePermission, type Principal } from "../authorization/policies.js";
 import type {
   Clock,
@@ -95,17 +96,29 @@ export async function runMetricQuery(
   const samplesBySeries = new Map<string, MetricSample[]>();
   for (const id of seriesIds) samplesBySeries.set(id, []);
 
-  for (const chunk of chunks) {
-    if (chunk.status !== "ready") continue;
+  const ready = chunks.filter((c) => c.status === "ready");
+  const started = deps.clock.now();
+  const loaded = await mapPool(ready, 8, async (chunk) => {
+    if (deps.clock.now() - started > limits.maxDurationMs) {
+      throw new AppError(
+        ErrorCodes.QUERY_TIMEOUT,
+        "Query execution exceeded the allowed limit.",
+        408,
+      );
+    }
     const body = await deps.objects.get(chunk.objectKey);
-    if (!body) continue;
+    if (!body) return null;
     const raw = await deps.compressor.gunzip(body);
     const samples = decodeSamples(raw).filter(
       (s) => s.timestamp >= input.start && s.timestamp <= input.end,
     );
-    const list = samplesBySeries.get(chunk.seriesId) ?? [];
-    list.push(...samples);
-    samplesBySeries.set(chunk.seriesId, list);
+    return { seriesId: chunk.seriesId, samples };
+  });
+  for (const item of loaded) {
+    if (!item) continue;
+    const list = samplesBySeries.get(item.seriesId) ?? [];
+    list.push(...item.samples);
+    samplesBySeries.set(item.seriesId, list);
   }
 
   for (const list of samplesBySeries.values()) {

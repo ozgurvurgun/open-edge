@@ -21,7 +21,7 @@ export class RealtimeHub {
       return new Response("ok");
     }
     if (url.pathname === "/tail") {
-      return this.tail(url.searchParams.get("filter"));
+      return this.tail(request, url.searchParams.get("filter"));
     }
     if (url.pathname === "/count") {
       return Response.json({ connections: this.connections.size });
@@ -29,7 +29,7 @@ export class RealtimeHub {
     return new Response("not found", { status: 404 });
   }
 
-  private tail(filter: string | null): Response {
+  private tail(request: Request, filter: string | null): Response {
     if (this.connections.size >= MAX_CONNECTIONS) {
       return new Response("connection limit", { status: 429 });
     }
@@ -44,10 +44,17 @@ export class RealtimeHub {
       });
     }, 15_000);
     void this.state.storage.setAlarm(Date.now() + 15_000);
-    requestIdle(this.state, () => {
+
+    const onAbort = () => {
       clearInterval(heartbeat);
       this.close(id);
-    });
+    };
+    if (request.signal.aborted) {
+      onAbort();
+    } else {
+      request.signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     return new Response(readable, {
       headers: {
         "content-type": "text/event-stream",
@@ -91,8 +98,6 @@ export class RealtimeHub {
     await this.state.storage.setAlarm(Date.now() + 15_000);
   }
 }
-
-function requestIdle(_state: DurableObjectState, _onClose: () => void): void {}
 
 export class AlertCoordinator {
   public constructor(private readonly state: DurableObjectState) {}

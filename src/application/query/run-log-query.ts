@@ -6,6 +6,7 @@ import { buildPlan } from "../../domain/query/planner.js";
 import { executeEntries, type QueryResult } from "../../domain/query/executor.js";
 import type { LogEntry } from "../../domain/logs/log-stream.js";
 import { AppError, ErrorCodes } from "../../shared/errors.js";
+import { mapPool } from "../../shared/map-pool.js";
 import { hourPeriodStart } from "../../domain/usage/usage-record.js";
 import { requirePermission, type Principal } from "../authorization/policies.js";
 import type {
@@ -107,7 +108,8 @@ export async function runLogQuery(
       byStream.set(stream.id, { labels: stream.labels.entries, entries: [] });
     }
   }
-  for (const key of plan.chunkKeys) {
+  const chunkByKey = new Map(chunks.map((c) => [c.objectKey, c]));
+  const fetched = await mapPool(plan.chunkKeys, 8, async (key) => {
     if (deps.clock.now() - started > limits.maxDurationMs) {
       throw new AppError(
         ErrorCodes.QUERY_TIMEOUT,
@@ -116,18 +118,17 @@ export async function runLogQuery(
       );
     }
     const body = await deps.objects.get(key);
-    if (!body) {
-      continue;
-    }
+    if (!body) return null;
     const raw = await deps.compressor.gunzip(body);
-    const entries = decodeEntries(raw);
-    const streamId = chunks.find((c) => c.objectKey === key)?.streamId;
-    if (!streamId) {
-      continue;
-    }
+    return { key, entries: decodeEntries(raw) };
+  });
+  for (const item of fetched) {
+    if (!item) continue;
+    const streamId = chunkByKey.get(item.key)?.streamId;
+    if (!streamId) continue;
     const bucket = byStream.get(streamId);
     if (bucket) {
-      bucket.entries.push(...entries);
+      bucket.entries.push(...item.entries);
     }
   }
   const maxRows = Math.min(input.limit ?? limits.maxResultRows, limits.maxResultRows);

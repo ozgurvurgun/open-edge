@@ -537,6 +537,32 @@ export function d1Dedup(db: D1Database): DedupRepository {
         .bind(tenantId, eventId, createdAt)
         .run();
     },
+    async filterUnseen(tenantId, eventIds) {
+      if (eventIds.length === 0) return [];
+      if (eventIds.length === 1) {
+        return (await this.seen(tenantId, eventIds[0]!)) ? [] : [eventIds[0]!];
+      }
+      const placeholders = eventIds.map(() => "?").join(",");
+      const rows = await db
+        .prepare(
+          `SELECT event_id FROM ingestion_dedup WHERE tenant_id = ? AND event_id IN (${placeholders})`,
+        )
+        .bind(tenantId, ...eventIds)
+        .all<{ event_id: string }>();
+      const seen = new Set((rows.results ?? []).map((r) => s(r.event_id)));
+      return eventIds.filter((id) => !seen.has(id));
+    },
+    async rememberMany(tenantId, eventIds, createdAt) {
+      if (eventIds.length === 0) return;
+      if (eventIds.length === 1) {
+        await this.remember(tenantId, eventIds[0]!, createdAt);
+        return;
+      }
+      const stmt = db.prepare(
+        "INSERT OR IGNORE INTO ingestion_dedup (tenant_id, event_id, created_at) VALUES (?, ?, ?)",
+      );
+      await db.batch(eventIds.map((eventId) => stmt.bind(tenantId, eventId, createdAt)));
+    },
   };
 }
 
